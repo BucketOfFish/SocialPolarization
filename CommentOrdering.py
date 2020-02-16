@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 class Individual:
     def __init__(self):
         self.opinion = np.random.normal(0, 0.2)
-        self.politeness = np.random.normal(0, 0.2)
+        self.convincingness = np.random.normal(0, 0.2)
         self.openness = np.random.normal(0.3, 0.1)
         self.patience = np.random.randint(1, 21)
 
@@ -23,13 +23,13 @@ class Individual:
             self.change_opinion(comment)
             # decide whether to reply, move on to the next comment, or read replies
             if self.decide_to_reply(comment):
-                comment.add_reply(self.opinion, self.politeness)
+                comment.add_reply(self.opinion, self.convincingness)
                 return
             elif self.decide_to_read_replies(comment):
                 self.read_and_reply(comment.child_head)
                 return
         # leave a comment at the last level we reached if we haven't already
-        head_comment.add_reply(self.opinion, self.politeness)
+        head_comment.add_reply(self.opinion, self.convincingness)
 
     def vote(self, comment):
         opinion_diff = abs(comment.opinion - self.opinion)
@@ -45,9 +45,10 @@ class Individual:
     def change_opinion(self, comment):
         match_opinion = comment.opinion * self.opinion > 0
         if match_opinion:
-            self.opinion = min(max(comment.opinion*self.openness + self.opinion, -1), 1)
+            convincingness = max(0, comment.convincingness)
+            self.opinion = min(max(comment.opinion*self.openness*convincingness + self.opinion, -1), 1)
         else:
-            self.opinion = min(max(comment.opinion*self.openness*comment.politeness + self.opinion, -1), 1)
+            self.opinion = min(max(comment.opinion*self.openness*comment.convincingness + self.opinion, -1), 1)
 
     def decide_to_reply(self, comment):
         opinion_diff = abs(comment.opinion - self.opinion)
@@ -75,9 +76,9 @@ class Population:
         plt.savefig(name)
         plt.clf()
 
-    def plot_politeness(self, name):
-        politeness = [i.politeness for i in self.population]
-        plt.hist(politeness, bins=100)
+    def plot_convincingness(self, name):
+        convincingness = [i.convincingness for i in self.population]
+        plt.hist(convincingness, bins=100)
         plt.savefig(name)
         plt.clf()
 
@@ -93,9 +94,9 @@ class Population:
 
 
 class Comment:
-    def __init__(self, opinion, politeness, *, head, previous=None, next=None):
+    def __init__(self, opinion, convincingness, *, head, previous=None, next=None):
         self.opinion = opinion
-        self.politeness = politeness
+        self.convincingness = convincingness
         self.previous = previous
         self.next = next
         self.head = head
@@ -138,10 +139,10 @@ class Comment:
             self.previous = child
             child.next = self
 
-    def add_reply(self, opinion, politeness):
+    def add_reply(self, opinion, convincingness):
         if self.child_head is None:
             self.child_head = HeadComment(parent=self, thread=self.head.thread, depth=self.head.depth+1)
-        self.child_head.add_reply(opinion, politeness)
+        self.child_head.add_reply(opinion, convincingness)
 
     def display(self):
         spaces = " " * self.depth
@@ -172,14 +173,14 @@ class HeadComment:
     def get_n_total_replies(self):
         return self.n_total_replies
 
-    def add_reply(self, opinion, politeness):
+    def add_reply(self, opinion, convincingness):
         self.n_direct_replies += 1
         self.increment_total_replies()
 
         comment_pointer = self
         while comment_pointer.next is not None and comment_pointer.next.karma >= 0:
             comment_pointer = comment_pointer.next
-        new_comment = Comment(opinion, politeness, head=self, previous=comment_pointer, next=comment_pointer.next)
+        new_comment = Comment(opinion, convincingness, head=self, previous=comment_pointer, next=comment_pointer.next)
         comment_pointer.next = new_comment
         if new_comment.next is not None:
             new_comment.next.previous = new_comment
@@ -219,8 +220,8 @@ if __name__ == "__main__":
 
     population = Population(n_individuals)
 
-    population.plot_politeness("Plots/initial_politeness.eps")
-    population.plot_openness("Plots/initial_openness.eps")
+    population.plot_convincingness("Plots/convincingness.eps")
+    population.plot_openness("Plots/openness.eps")
     population.plot_opinions("Plots/initial_opinions.eps")
 
     for i in range(n_threads):
