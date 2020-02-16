@@ -6,15 +6,15 @@ class Individual:
     def __init__(self):
         self.opinion = np.random.normal(0, 0.2)
         self.politeness = np.random.normal(0, 0.2)
-        self.openness = np.random.normal(0.5, 0.1)
-        self.read_max_comments_in_level = np.random.randint(1, 21)
+        self.openness = np.random.normal(0.3, 0.1)
+        self.patience = np.random.randint(1, 21)
 
     def read_and_reply(self, head_comment):
         # read comments and vote - comments will shift order during voting, so prefetch the comments to read
         read_list = []
         comment = head_comment.next
         n_read_comments = 0
-        while comment is not None and n_read_comments < self.read_max_comments_in_level:
+        while comment is not None and n_read_comments < self.patience:
             read_list.append(comment)
             n_read_comments += 1
             comment = comment.next
@@ -32,18 +32,22 @@ class Individual:
         head_comment.add_reply(self.opinion, self.politeness)
 
     def vote(self, comment):
-        match_opinion = comment.opinion * self.opinion > 0
-        p_upvote = match_opinion
-        p_downvote = not match_opinion
-        if np.random.uniform() < p_upvote:
-            comment.vote(1)
-        if p_upvote < np.random.uniform() < p_downvote:
-            comment.vote(-1)
-        else:
+        opinion_diff = abs(comment.opinion - self.opinion)
+        if (opinion_diff < 0.6) and (opinion_diff > 0.2):
             comment.vote(0)
+        else:
+            p_upvote = np.exp(-opinion_diff * 5)
+            if np.random.uniform() < p_upvote:
+                comment.vote(1)
+            else:
+                comment.vote(-1)
 
     def change_opinion(self, comment):
-        self.opinion = min(max(comment.opinion*self.openness*comment.politeness + self.opinion, -1), 1)
+        match_opinion = comment.opinion * self.opinion > 0
+        if match_opinion:
+            self.opinion = min(max(comment.opinion*self.openness + self.opinion, -1), 1)
+        else:
+            self.opinion = min(max(comment.opinion*self.openness*comment.politeness + self.opinion, -1), 1)
 
     def decide_to_reply(self, comment):
         opinion_diff = abs(comment.opinion - self.opinion)
@@ -52,7 +56,7 @@ class Individual:
 
     def decide_to_read_replies(self, comment):
         if comment.has_replies():
-            p_read = np.exp(-comment.get_n_total_replies()/20)
+            p_read = 0.2 + 0.8 * (1 - np.exp(-comment.get_n_total_replies()/20))
             return np.random.uniform() < p_read
         else:
             return False
@@ -77,9 +81,9 @@ class Population:
         plt.savefig(name)
         plt.clf()
 
-    def plot_bias(self, name):
-        bias = [i.openness for i in self.population]
-        plt.hist(bias, bins=100)
+    def plot_openness(self, name):
+        openness = [i.openness for i in self.population]
+        plt.hist(openness, bins=100)
         plt.savefig(name)
         plt.clf()
 
@@ -139,13 +143,13 @@ class Comment:
             self.child_head = HeadComment(parent=self, thread=self.head.thread, depth=self.head.depth+1)
         self.child_head.add_reply(opinion, politeness)
 
-    def __str__(self):
+    def display(self):
         spaces = " " * self.depth
-        print(f"{spaces}({self.karma}, {self.openness})")
+        print(f"{spaces}({self.karma}, {self.opinion:.2f})")
         if self.child_head is not None:
-            print(self.child_head)
+            self.child_head.display()
         if self.next is not None:
-            print(self.next)
+            self.next.display()
 
 
 class HeadComment:
@@ -173,7 +177,7 @@ class HeadComment:
         self.increment_total_replies()
 
         comment_pointer = self
-        while comment_pointer.next is not None and comment_pointer.next.karma > 0:
+        while comment_pointer.next is not None and comment_pointer.next.karma >= 0:
             comment_pointer = comment_pointer.next
         new_comment = Comment(opinion, politeness, head=self, previous=comment_pointer, next=comment_pointer.next)
         comment_pointer.next = new_comment
@@ -186,9 +190,9 @@ class HeadComment:
             self.parent.head.increment_total_replies()
 
     def has_replies(self):
-        return self.n_direct_replies == 0
+        return self.next is not None
 
-    def __str__(self):
+    def display(self):
         self.next.display()
 
 
@@ -202,21 +206,21 @@ class Thread:
         for individual in population:
             individual.read_and_reply(self.head_comment)
 
-    def __str__(self):
+    def display(self):
         if self.head_comment.has_replies():
-            print(self.head_comment)
+            self.head_comment.display()
         else:
             print("No comments in thread")
 
 
 if __name__ == "__main__":
     n_individuals = 10000
-    n_threads = 50
+    n_threads = 100
 
     population = Population(n_individuals)
 
     population.plot_politeness("Plots/initial_politeness.eps")
-    population.plot_bias("Plots/initial_bias.eps")
+    population.plot_openness("Plots/initial_openness.eps")
     population.plot_opinions("Plots/initial_opinions.eps")
 
     for i in range(n_threads):
