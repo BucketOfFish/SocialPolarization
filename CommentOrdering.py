@@ -1,23 +1,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import random
 
 
 class Individual:
     def __init__(self):
         self.opinion = np.random.normal(0, 0.2)
         self.convincingness = np.random.normal(0, 0.2)
-        self.openness = np.random.normal(0.3, 0.1)
+        self.openness = np.random.normal(0.3, 0.05)
         self.patience = np.random.randint(1, 21)
 
     def read_and_reply(self, head_comment):
         # read comments and vote - comments will shift order during voting, so prefetch the comments to read
-        read_list = []
-        comment = head_comment.next
-        n_read_comments = 0
-        while comment is not None and n_read_comments < self.patience:
-            read_list.append(comment)
-            n_read_comments += 1
-            comment = comment.next
+        read_list = head_comment.get_top_comments(self.patience)
         for comment in read_list:
             self.vote(comment)
             self.change_opinion(comment)
@@ -193,6 +188,43 @@ class HeadComment:
     def has_replies(self):
         return self.next is not None
 
+    def get_top_comments(self, n_comments):
+        return self.get_random_comments(n_comments)
+
+    def get_random_comments(self, n_comments):
+        read_list = []
+        comment = self.next
+        if self.n_direct_replies <= n_comments:
+            while comment is not None:
+                read_list.append(comment)
+                comment = comment.next
+        else:
+            read_indices = random.sample(range(self.n_direct_replies), n_comments)
+            read_indices.sort()
+            read_indices = read_indices[::-1]
+            next_index = read_indices.pop()
+            n_read_comments = 0
+            while comment is not None:
+                if n_read_comments == next_index:
+                    read_list.append(comment)
+                    if len(read_indices) == 0:
+                        break
+                    else:
+                        next_index = read_indices.pop()
+                n_read_comments += 1
+                comment = comment.next
+        return read_list
+
+    def get_most_upvoted_comments(self, n_comments):
+        read_list = []
+        comment = self.next
+        n_read_comments = 0
+        while comment is not None and n_read_comments < n_comments:
+            read_list.append(comment)
+            n_read_comments += 1
+            comment = comment.next
+        return read_list
+
     def display(self):
         self.next.display()
 
@@ -215,8 +247,8 @@ class Thread:
 
 
 if __name__ == "__main__":
-    n_individuals = 10000
-    n_threads = 100
+    n_individuals = 100
+    n_threads = 1
 
     population = Population(n_individuals)
 
