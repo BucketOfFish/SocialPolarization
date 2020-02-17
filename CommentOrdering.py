@@ -5,26 +5,38 @@ import random
 
 class Individual:
     def __init__(self):
-        self.opinion = np.random.normal(0, 0.2)
-        self.convincingness = np.random.normal(0, 0.2)
-        self.openness = np.random.normal(0.3, 0.05)
-        self.patience = np.random.randint(1, 21)
+        self.opinion = np.clip(np.random.normal(0, 0.2), -1, 1)
+        self.bias = np.clip(np.random.normal(0.3, 0.05), 0, 1)
+        self.openness = np.clip(np.random.normal(0.3, 0.05), 0, 1)
+        self.patience = np.random.poisson(5)
 
     def read_and_reply(self, head_comment):
         # read comments and vote - comments will shift order during voting, so prefetch the comments to read
-        read_list = head_comment.get_top_comments(self.patience)
+        read_list = head_comment.get_top_replies(self.patience)
         for comment in read_list:
             self.vote(comment)
             self.change_opinion(comment)
             # decide whether to reply, move on to the next comment, or read replies
             if self.decide_to_reply(comment):
-                comment.add_reply(self.opinion, self.convincingness)
+                comment.add_reply(self.opinion, self.get_comment_convincingness())
                 return
             elif self.decide_to_read_replies(comment):
-                self.read_and_reply(comment.child_head)
+                self.read_and_reply(comment)
                 return
         # leave a comment at the last level we reached if we haven't already
-        head_comment.add_reply(self.opinion, self.convincingness)
+        head_comment.add_reply(self.opinion, self.get_comment_convincingness())
+
+    def get_comment_convincingness(self):
+        def get_gaussian_convincingness():
+            return np.clip(np.random.normal(0.2, 0.1), 0, 1)
+
+        def get_truth_biased_convincingness():
+            truth_value = 0.7
+            truth_boost = 0.5 - abs(truth_value - self.opinion)
+            convincingness = get_gaussian_convincingness() + truth_boost
+            return np.clip(convincingness, 0, 1)
+
+        return get_truth_biased_convincingness()
 
     def vote(self, comment):
         opinion_diff = abs(comment.opinion - self.opinion)
@@ -38,12 +50,13 @@ class Individual:
                 comment.vote(-1)
 
     def change_opinion(self, comment):
+        opinion_diff = abs(comment.opinion - self.opinion)
         match_opinion = comment.opinion * self.opinion > 0
         if match_opinion:
-            convincingness = max(0, comment.convincingness)
-            self.opinion = min(max(comment.opinion*self.openness*convincingness + self.opinion, -1), 1)
+            convincingness = comment.convincingness + self.bias * opinion_diff
         else:
-            self.opinion = min(max(comment.opinion*self.openness*comment.convincingness + self.opinion, -1), 1)
+            convincingness = comment.convincingness - self.bias * opinion_diff
+        self.opinion = min(max(comment.opinion*self.openness*convincingness + self.opinion, -1), 1)
 
     def decide_to_reply(self, comment):
         opinion_diff = abs(comment.opinion - self.opinion)
@@ -52,7 +65,7 @@ class Individual:
 
     def decide_to_read_replies(self, comment):
         if comment.has_replies():
-            p_read = 0.2 + 0.8 * (1 - np.exp(-comment.get_n_total_replies()/20))
+            p_read = 0.2 + 0.8 * (1 - np.exp(-comment.n_total_replies/20))
             return np.random.uniform() < p_read
         else:
             return False
@@ -71,15 +84,17 @@ class Population:
         plt.savefig(name)
         plt.clf()
 
-    def plot_convincingness(self, name):
-        convincingness = [i.convincingness for i in self.population]
-        plt.hist(convincingness, bins=100)
-        plt.savefig(name)
-        plt.clf()
-
     def plot_openness(self, name):
         openness = [i.openness for i in self.population]
         plt.hist(openness, bins=100)
+        plt.xlim(0, 1)
+        plt.savefig(name)
+        plt.clf()
+
+    def plot_bias(self, name):
+        bias = [i.bias for i in self.population]
+        plt.hist(bias, bins=100)
+        plt.xlim(0, 1)
         plt.savefig(name)
         plt.clf()
 
@@ -89,150 +104,76 @@ class Population:
 
 
 class Comment:
-    def __init__(self, opinion, convincingness, *, head, previous=None, next=None):
+    def __init__(self, opinion, convincingness, *, depth, parent=None, thread):
         self.opinion = opinion
         self.convincingness = convincingness
-        self.previous = previous
-        self.next = next
-        self.head = head
-        self.parent = head.parent
-        self.child_head = None
-        self.depth = head.depth+1
+        self.parent = parent
+        self.children = []
+        self.thread = thread
+        self.depth = depth
         self.karma = 0
-
-    def is_head(self):
-        return False
-
-    def get_n_total_replies(self):
-        if self.child_head is None:
-            return 0
-        else:
-            return self.child_head.n_total_replies
+        self.n_direct_replies = 0
+        self.n_total_replies = 0
+        self.ordering = "top_voted"
 
     def has_replies(self):
-        return self.child_head is not None
+        return self.n_total_replies > 0
 
     def vote(self, vote):
         self.karma += vote
-        if not self.previous.is_head() and self.previous.karma < self.karma:
-            parent = self.previous
-            grandparent = parent.previous
-            child = self.next
-            parent.next = child
-            if child is not None:
-                child.previous = parent
-            self.next = parent
-            self.previous = grandparent
-            grandparent.next = self
-        if self.next is not None and self.next.karma > self.karma:
-            parent = self.previous
-            child = self.next
-            grandchild = child.next
-            parent.next = child
-            child.previous = parent
-            self.next = grandchild
-            self.previous = child
-            child.next = self
 
     def add_reply(self, opinion, convincingness):
-        if self.child_head is None:
-            self.child_head = HeadComment(parent=self, thread=self.head.thread, depth=self.head.depth+1)
-        self.child_head.add_reply(opinion, convincingness)
-
-    def display(self):
-        spaces = " " * self.depth
-        print(f"{spaces}({self.karma}, {self.opinion:.2f})")
-        if self.child_head is not None:
-            self.child_head.display()
-        if self.next is not None:
-            self.next.display()
-
-
-class HeadComment:
-    '''This class is a dummy comment, treated as the first 'comment' at any given depth in the thread.
-       It contains information about the comments at that depth.'''
-    def __init__(self, *, parent, thread, depth):
-        self.next = None
-        self.parent = parent
-        self.n_direct_replies = 0
-        self.n_total_replies = 0
-        self.depth = depth
-        self.thread = thread
-
-    def is_head(self):
-        return True
-
-    def get_n_direct_replies(self):
-        return self.n_direct_replies
-
-    def get_n_total_replies(self):
-        return self.n_total_replies
-
-    def add_reply(self, opinion, convincingness):
+        new_comment = Comment(opinion, convincingness, depth=self.depth+1, parent=self, thread=self.thread)
+        self.children.append(new_comment)
         self.n_direct_replies += 1
         self.increment_total_replies()
-
-        comment_pointer = self
-        while comment_pointer.next is not None and comment_pointer.next.karma >= 0:
-            comment_pointer = comment_pointer.next
-        new_comment = Comment(opinion, convincingness, head=self, previous=comment_pointer, next=comment_pointer.next)
-        comment_pointer.next = new_comment
-        if new_comment.next is not None:
-            new_comment.next.previous = new_comment
 
     def increment_total_replies(self):
         self.n_total_replies += 1
         if self.parent is not None:
-            self.parent.head.increment_total_replies()
+            self.parent.increment_total_replies()
 
-    def has_replies(self):
-        return self.next is not None
-
-    def get_top_comments(self, n_comments):
-        return self.get_random_comments(n_comments)
-
-    def get_random_comments(self, n_comments):
-        read_list = []
-        comment = self.next
-        if self.n_direct_replies <= n_comments:
-            while comment is not None:
-                read_list.append(comment)
-                comment = comment.next
+    def get_top_replies(self, n_replies):
+        if self.ordering == "top_voted":
+            return self.get_top_voted_replies(n_replies)
+        elif self.ordering == "random":
+            return self.get_random_replies(n_replies)
         else:
-            read_indices = random.sample(range(self.n_direct_replies), n_comments)
-            read_indices.sort()
-            read_indices = read_indices[::-1]
-            next_index = read_indices.pop()
-            n_read_comments = 0
-            while comment is not None:
-                if n_read_comments == next_index:
-                    read_list.append(comment)
-                    if len(read_indices) == 0:
-                        break
-                    else:
-                        next_index = read_indices.pop()
-                n_read_comments += 1
-                comment = comment.next
-        return read_list
+            print("Unrecognized comment ordering system")
+            exit()
 
-    def get_most_upvoted_comments(self, n_comments):
-        read_list = []
-        comment = self.next
-        n_read_comments = 0
-        while comment is not None and n_read_comments < n_comments:
-            read_list.append(comment)
-            n_read_comments += 1
-            comment = comment.next
-        return read_list
+    def get_random_replies(self, n_replies):
+        if self.n_direct_replies <= n_replies:
+            return self.children
+        else:
+            read_list = []
+            read_indices = random.sample(range(self.n_direct_replies), n_replies)
+            for index in read_indices:
+                read_list.append(self.children[index])
+            return read_list
+
+    def get_top_voted_replies(self, n_replies):
+        if self.n_direct_replies <= n_replies:
+            return self.children
+        else:
+            read_list = []
+            karma = np.array([child.karma for child in self.children])
+            top_voted_indices = np.argpartition(karma, -n_replies)[-n_replies:]
+            for index in top_voted_indices:
+                read_list.append(self.children[index])
+            return read_list
 
     def display(self):
-        self.next.display()
+        spaces = " " * self.depth
+        print(f"{spaces}({self.karma}, {self.opinion:.2f})")
+        for child in self.children:
+            child.display()
 
 
 class Thread:
     def __init__(self):
         '''Initialize the thread with a 0-depth head comment with no replies.'''
-        self.head_comment = HeadComment(parent=None, thread=self, depth=0)
+        self.head_comment = Comment(0, 0, depth=0, parent=None, thread=self)
 
     def fill_comments(self, population):
         '''Get everybody in the population to read the thread and leave a comment.'''
@@ -247,16 +188,16 @@ class Thread:
 
 
 if __name__ == "__main__":
-    n_individuals = 100
-    n_threads = 1
+    n_individuals = 10000
+    n_threads = 100
 
     population = Population(n_individuals)
 
-    population.plot_convincingness("Plots/convincingness.eps")
     population.plot_openness("Plots/openness.eps")
-    population.plot_opinions("Plots/initial_opinions.eps")
+    population.plot_bias("Plots/bias.eps")
 
     for i in range(n_threads):
         thread = Thread()
-        thread.fill_comments(population)
         population.plot_opinions(f"Plots/opinions_{i}.eps")
+        thread.fill_comments(population)
+    population.plot_opinions(f"Plots/opinions_{n_threads}.eps")
